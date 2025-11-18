@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # ================================
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 EVO_API_URL = os.environ.get('EVO_API_URL')
-EVO_API_KEY = os.environ.get('EVO_API_KEY')
+AUTHENTICATION_API_KEY = os.environ.get('AUTHENTICATION_API_KEY')
 EVO_INSTANCE_NAME = os.environ.get('EVO_INSTANCE_NAME')
 TEST_PHONE_NUMBER = os.environ.get('TEST_PHONE_NUMBER')
 
