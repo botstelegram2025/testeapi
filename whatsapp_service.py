@@ -6,7 +6,7 @@ log = logging.getLogger("whatsapp_service")
 
 class WhatsAppService:
     def __init__(self):
-        self.API_URL = os.getenv("WHATSAPP_API_URL")  # exemplo: https://meu-projeto.up.railway.app
+        self.API_URL = os.getenv("WHATSAPP_API_URL")
         if self.API_URL.endswith("/"):
             self.API_URL = self.API_URL[:-1]
 
@@ -17,7 +17,6 @@ class WhatsAppService:
     # =============================
 
     async def create_instance(self, instance_name: str):
-        """Cria uma nova instância Baileys"""
         url = f"{self.API_URL}/instance/create"
         data = {"instanceName": instance_name}
 
@@ -30,7 +29,6 @@ class WhatsAppService:
             return {"status": False, "error": str(e)}
 
     async def fetch_instances(self):
-        """Retorna todas as instâncias ativas"""
         url = f"{self.API_URL}/instance/fetchInstances"
 
         try:
@@ -42,23 +40,10 @@ class WhatsAppService:
             return {"status": False, "error": str(e)}
 
     # =============================
-    # STATUS & QR CODE
+    # QR CODE
     # =============================
 
-    async def get_status(self, instance_name: str):
-        """Obtém o estado da instância (open, close, connecting, etc.)"""
-        url = f"{self.API_URL}/instance/status/{instance_name}"
-
-        try:
-            async with httpx.AsyncClient(timeout=20) as client:
-                resp = await client.get(url)
-                return resp.json()
-        except Exception as e:
-            log.error(f"Erro ao obter status: {e}")
-            return {"status": False, "state": "error", "error": str(e)}
-
     async def get_qr(self, instance_name: str):
-        """Obtém o QR code atual da instância"""
         url = f"{self.API_URL}/instance/qr/{instance_name}"
 
         try:
@@ -78,21 +63,8 @@ class WhatsAppService:
     # CONTROLE DA SESSÃO
     # =============================
 
-    async def reconnect(self, instance_name: str):
-        """Força reconexão da instância"""
-        url = f"{self.API_URL}/instance/restart/{instance_name}"
-
-        try:
-            async with httpx.AsyncClient(timeout=20) as client:
-                resp = await client.post(url)
-                return resp.json()
-        except Exception as e:
-            log.error(f"Erro ao reconectar: {e}")
-            return {"status": False, "error": str(e)}
-
     async def connect(self, instance_name: str):
-        """Ativa a conexão da instância"""
-        url = f"{self.API_URL}/instance/connect/{instance_name}"
+        url = f"{self.API_URL}/instance/start/{instance_name}"
 
         try:
             async with httpx.AsyncClient(timeout=20) as client:
@@ -102,24 +74,27 @@ class WhatsAppService:
             log.error(f"Erro ao conectar instância: {e}")
             return {"status": False, "error": str(e)}
 
-    async def delete_instance(self, instance_name: str):
-        """Remove uma instância"""
-        url = f"{self.API_URL}/instance/delete/{instance_name}"
+    async def reconnect(self, instance_name: str):
+        url = f"{self.API_URL}/instance/reconnect/{instance_name}"
 
         try:
             async with httpx.AsyncClient(timeout=20) as client:
-                resp = await client.delete(url)
+                resp = await client.post(url)
                 return resp.json()
         except Exception as e:
-            log.error(f"Erro ao deletar instância: {e}")
+            log.error(f"Erro ao reconectar instância: {e}")
             return {"status": False, "error": str(e)}
+
+    async def delete_instance(self, instance_name: str):
+        """(opcional — seu servidor não tem essa rota ainda)"""
+        url = f"{self.API_URL}/instance/delete/{instance_name}"
+        return {"status": False, "error": "Not implemented in server"}
 
     # =============================
     # ENVIO DE MENSAGENS
     # =============================
 
     async def send_text(self, instance_name: str, number: str, message: str):
-        """Envia mensagem de texto"""
         url = f"{self.API_URL}/message/sendText"
 
         payload = {
@@ -136,52 +111,6 @@ class WhatsAppService:
             log.error(f"Erro ao enviar mensagem: {e}")
             return {"status": False, "error": str(e)}
 
-    # =============================
-    # FUNÇÕES DE ALTO NÍVEL (para Telegram Bot)
-    # =============================
-
-    async def ensure_instance(self, instance_name: str):
-        """Se a instância não existir → cria."""
-        instances = await self.fetch_instances()
-
-        if not instances.get("instances"):
-            await self.create_instance(instance_name)
-            return True
-
-        if instance_name not in instances["instances"]:
-            await self.create_instance(instance_name)
-            return True
-
-        return True
-
-    async def get_connection_state(self, instance_name: str):
-        """Retorna estado e tenta recuperar fallback"""
-        status = await self.get_status(instance_name)
-
-        if not status.get("status"):
-            return {"connected": False, "state": "error"}
-
-        state = status.get("state", "unknown")
-
-        return {
-            "connected": state == "open",
-            "state": state
-        }
-
-    async def get_qr_auto(self, instance_name: str):
-        """Se a sessão estiver desconectada → gera QR"""
-        status = await self.get_connection_state(instance_name)
-
-        if status["connected"]:
-            return {"success": True, "connected": True, "qr": None}
-
-        qr = await self.get_qr(instance_name)
-        return {
-            "success": True,
-            "connected": False,
-            "qr": qr.get("qr")
-        }
-
-
 # Instância global
 whatsapp = WhatsAppService()
+
