@@ -3,6 +3,7 @@ import telebot
 import requests
 from io import BytesIO
 import logging
+import qrcode
 
 # ================================
 # CONFIGURAÇÃO DE LOGS
@@ -17,138 +18,292 @@ logger = logging.getLogger(__name__)
 # VARIÁVEIS DE AMBIENTE
 # ================================
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
-EVO_API_URL = os.environ.get('WHATSAPP_API_URL')  # 🔥 usa API free
-EVO_INSTANCE_NAME = os.environ.get('EVO_INSTANCE_NAME')
+EVO_API_URL = os.environ.get('WHATSAPP_API_URL')   # link da API Evolution Free
+EVO_INSTANCE_NAME = os.environ.get('EVO_INSTANCE_NAME') or "defaultbot"
 TEST_PHONE_NUMBER = os.environ.get('TEST_PHONE_NUMBER')
 
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 
 def disable_webhook():
     try:
-        logger.info("Removendo webhook antes de iniciar polling...")
+        logger.info("Removendo webhook...")
         bot.remove_webhook()
-        logger.info("Webhook removido com sucesso.")
+        logger.info("Webhook removido.")
     except Exception as e:
         logger.error(f"Erro ao remover webhook: {e}")
 
-# ================================
-# FUNÇÕES EVOLUTION API FREE
-# ================================
+# ==========================================
+# FUNÇÕES DA EVOLUTION API FREE
+# ==========================================
+
+def api_get(path):
+    url = f"{EVO_API_URL}{path}"
+    logger.debug(f"[GET] {url}")
+    return requests.get(url, timeout=15).json()
+
+def api_post(path, payload=None, files=None):
+    url = f"{EVO_API_URL}{path}"
+    logger.debug(f"[POST] {url} | Payload: {payload}")
+    return requests.post(url, json=payload, data=payload, files=files, timeout=20).json()
 
 def check_evolution_status():
-    url = f"{EVO_API_URL}/health"
-    logger.info(f"Verificando status da API: {url}")
-
     try:
-        r = requests.get(url, timeout=10)
-        return f"✅ API Online!\nResposta: {r.text}"
+        data = api_get("/health")
+        return f"✅ API Online!\n{data}"
     except Exception as e:
-        logger.error(f"Erro status: {e}")
         return f"❌ Erro ao verificar API: {e}"
 
 def get_qrcode_image():
-    url = f"{EVO_API_URL}/instance/qr/{EVO_INSTANCE_NAME}"
-    logger.info(f"Buscando QR Code: {url}")
-
     try:
-        r = requests.get(url, timeout=15)
+        data = api_get(f"/instance/qr/{EVO_INSTANCE_NAME}")
 
-        data = r.json()
         qr_text = data.get("qr")
-
         if not qr_text:
-            return None, "QR não disponível. A instância ainda não gerou o QR."
+            return None, "QR ainda não disponível. A instância pode estar conectada ou carregando."
 
-        # Converte texto QR para imagem
-        import qrcode
         img = qrcode.make(qr_text)
-        buffer = BytesIO()
-        img.save(buffer, format="PNG")
-        buffer.seek(0)
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
 
-        return buffer.getvalue(), None
+        return buf.getvalue(), None
 
     except Exception as e:
-        logger.error(f"Erro QR Code: {e}")
-        return None, f"❌ Erro ao buscar QR Code: {e}"
+        return None, f"❌ Erro ao gerar QR: {e}"
 
-def send_test_message(number, text):
-    url = f"{EVO_API_URL}/message/sendText"
+def send_text_message(number, text):
     payload = {
         "instanceName": EVO_INSTANCE_NAME,
         "to": number,
         "message": text
     }
+    return api_post("/message/sendText", payload)
 
-    logger.info(f"Enviando mensagem para {number}: {text}")
-
-    try:
-        r = requests.post(url, json=payload, timeout=10)
-        data = r.json()
-
-        if data.get("status"):
-            return "✅ Mensagem enviada com sucesso!"
-        return f"⚠️ Falha: {data}"
-
-    except Exception as e:
-        logger.error(f"Erro ao enviar mensagem: {e}")
-        return f"❌ Erro ao enviar mensagem: {e}"
-
-# ================================
-# COMMANDS TELEGRAM
-# ================================
+# ==========================================
+# COMANDOS DO BOT
+# ==========================================
 
 @bot.message_handler(commands=["start", "help"])
 def start(message):
     bot.reply_to(message,
-        "🤖 Bot WhatsApp Evolution FREE\n\n"
-        "/status - Testar API\n"
-        "/qrcode - Ver QR Code\n"
-        "/enviar - Enviar mensagem teste\n"
-        "/env - Ver variáveis carregadas"
+        "🤖 *Evolution API FREE Bot*\n\n"
+        "/status - Verificar API\n"
+        "/qrcode - QR Code da instância\n"
+        "/enviar - Enviar mensagem texto\n"
+        "/instancias - Listar instâncias\n"
+        "/criar_instancia nome\n"
+        "/connect - Reconectar instância\n"
+        "/restart - Reiniciar instância\n"
+        "/enviar_imagem\n"
+        "/enviar_audio\n"
+        "/enviar_doc\n"
+        "/botao - Enviar botões interativos\n"
+        "/env - Ver variáveis\n",
+        parse_mode="Markdown"
     )
 
 @bot.message_handler(commands=["env"])
 def env(message):
     bot.send_message(
         message.chat.id,
-        f"EVO_API_URL = {EVO_API_URL}\n"
-        f"EVO_INSTANCE_NAME = {EVO_INSTANCE_NAME}\n"
-        f"TEST_PHONE_NUMBER = {TEST_PHONE_NUMBER}",
+        f"""
+EVO_API_URL = {EVO_API_URL}
+EVO_INSTANCE_NAME = {EVO_INSTANCE_NAME}
+TEST_PHONE_NUMBER = {TEST_PHONE_NUMBER}
+""",
         parse_mode="Markdown"
     )
+
+# =====================================================
+# STATUS
+# =====================================================
 
 @bot.message_handler(commands=["status"])
 def cmd_status(message):
     bot.send_message(message.chat.id, check_evolution_status())
 
+# =====================================================
+# QR CODE
+# =====================================================
+
 @bot.message_handler(commands=["qrcode"])
 def cmd_qrcode(message):
-    bot.send_message(message.chat.id, "⏳ Gerando QR Code...")
+    bot.send_message(message.chat.id, "⏳ Gerando QR...")
 
-    image, error = get_qrcode_image()
+    img, error = get_qrcode_image()
 
     if error:
         bot.send_message(message.chat.id, f"❌ {error}")
         return
 
-    photo = BytesIO(image)
-    photo.name = "qrcode.png"
+    photo = BytesIO(img)
+    photo.name = "qr.png"
+    bot.send_photo(message.chat.id, photo, caption="📲 Escaneie para conectar!")
 
-    bot.send_photo(message.chat.id, photo, caption="📲 Escaneie o QR para conectar!")
+# =====================================================
+# ENVIAR MENSAGEM SIMPLES
+# =====================================================
 
 @bot.message_handler(commands=["enviar"])
 def cmd_enviar(message):
     if not TEST_PHONE_NUMBER:
-        bot.reply_to(message, "⚠ TEST_PHONE_NUMBER não configurado.")
-        return
+        return bot.send_message(message.chat.id, "⚠ TEST_PHONE_NUMBER não configurado")
 
-    result = send_test_message(TEST_PHONE_NUMBER, "Mensagem de teste via Evolution FREE API")
-    bot.send_message(message.chat.id, result)
+    r = send_text_message(TEST_PHONE_NUMBER, "Mensagem de teste via Evolution API Free")
+    bot.send_message(message.chat.id, f"📨 {r}")
 
-# ================================
+# =====================================================
+# /instancias
+# =====================================================
+
+@bot.message_handler(commands=["instancias"])
+def cmd_instancias(message):
+    try:
+        data = api_get("/instance/fetchInstances")
+
+        if not data.get("instances"):
+            bot.send_message(message.chat.id, "📭 Nenhuma instância criada.")
+            return
+
+        lista = "\n".join([f"➡️ {i}" for i in data["instances"]])
+        bot.send_message(message.chat.id, f"📌 *Instâncias:*\n{lista}", parse_mode="Markdown")
+
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Erro: {e}")
+
+# =====================================================
+# /criar_instancia <nome>
+# =====================================================
+
+@bot.message_handler(commands=["criar_instancia"])
+def cmd_criar_instancia(message):
+    parts = message.text.split()
+
+    if len(parts) < 2:
+        return bot.reply_to(message, "⚠ Use: /criar_instancia nome")
+
+    nome = parts[1]
+
+    r = api_post("/instance/create", {"instanceName": nome})
+    bot.send_message(message.chat.id, f"📌 {r}")
+
+# =====================================================
+# /connect
+# =====================================================
+
+@bot.message_handler(commands=["connect"])
+def cmd_connect(message):
+    r = api_post(f"/instance/connect/{EVO_INSTANCE_NAME}")
+    bot.send_message(message.chat.id, f"🔄 Conectando...\n{r}")
+
+# =====================================================
+# /restart
+# =====================================================
+
+@bot.message_handler(commands=["restart"])
+def cmd_restart(message):
+    r = api_post(f"/instance/restart/{EVO_INSTANCE_NAME}")
+    bot.send_message(message.chat.id, f"🔁 Reiniciando...\n{r}")
+
+# =====================================================
+# ENVIO DE MÍDIA (IMAGEM)
+# =====================================================
+
+@bot.message_handler(commands=["enviar_imagem"])
+def cmd_enviar_imagem(message):
+    bot.send_message(message.chat.id, "📸 Envie uma imagem agora...")
+
+    @bot.message_handler(content_types=["photo"])
+    def process_image(img_msg):
+        file_id = img_msg.photo[-1].file_id
+        file_info = bot.get_file(file_id)
+        downloaded = bot.download_file(file_info.file_path)
+
+        url = f"{EVO_API_URL}/message/sendMedia"
+        files = {'file': ('image.jpg', downloaded, 'image/jpeg')}
+        payload = {
+            "instanceName": EVO_INSTANCE_NAME,
+            "to": TEST_PHONE_NUMBER,
+            "caption": "Imagem via Evolution API Free"
+        }
+
+        response = requests.post(url, data=payload, files=files)
+        bot.send_message(message.chat.id, f"📨 {response.text}")
+
+# =====================================================
+# ENVIO DE ÁUDIO
+# =====================================================
+
+@bot.message_handler(commands=["enviar_audio"])
+def cmd_enviar_audio(message):
+    bot.send_message(message.chat.id, "🎤 Envie o áudio...")
+
+    @bot.message_handler(content_types=["audio", "voice"])
+    def process_audio(audio_msg):
+        file_id = audio_msg.audio.file_id if audio_msg.audio else audio_msg.voice.file_id
+        file_info = bot.get_file(file_id)
+        downloaded = bot.download_file(file_info.file_path)
+
+        url = f"{EVO_API_URL}/message/sendMedia"
+        files = {'file': ('audio.ogg', downloaded, 'audio/ogg')}
+        payload = {
+            "instanceName": EVO_INSTANCE_NAME,
+            "to": TEST_PHONE_NUMBER,
+            "caption": "Áudio via Evolution API Free"
+        }
+
+        response = requests.post(url, data=payload, files=files)
+        bot.send_message(message.chat.id, f"📨 {response.text}")
+
+# =====================================================
+# ENVIO DE DOCUMENTO
+# =====================================================
+
+@bot.message_handler(commands=["enviar_doc"])
+def cmd_enviar_doc(message):
+    bot.send_message(message.chat.id, "📄 Envie agora o arquivo...")
+
+    @bot.message_handler(content_types=["document"])
+    def process_doc(doc_msg):
+        file_id = doc_msg.document.file_id
+        file_info = bot.get_file(file_id)
+        downloaded = bot.download_file(file_info.file_path)
+
+        url = f"{EVO_API_URL}/message/sendMedia"
+        files = {
+            'file': (doc_msg.document.file_name, downloaded, doc_msg.document.mime_type)
+        }
+        payload = {
+            "instanceName": EVO_INSTANCE_NAME,
+            "to": TEST_PHONE_NUMBER,
+            "caption": "Documento via Evolution API Free"
+        }
+
+        response = requests.post(url, data=payload, files=files)
+        bot.send_message(message.chat.id, f"📨 {response.text}")
+
+# =====================================================
+# BOTÕES INTERATIVOS
+# =====================================================
+
+@bot.message_handler(commands=["botao"])
+def cmd_botao(message):
+    payload = {
+        "instanceName": EVO_INSTANCE_NAME,
+        "to": TEST_PHONE_NUMBER,
+        "message": "Escolha uma opção:",
+        "buttons": [
+            {"id": "sim", "text": "Sim 👍"},
+            {"id": "nao", "text": "Não 👎"}
+        ]
+    }
+
+    r = api_post("/message/sendText", payload)
+    bot.send_message(message.chat.id, f"📨 {r}")
+
+# ==========================================
 # INICIAR BOT
-# ================================
+# ==========================================
 if __name__ == "__main__":
     logger.info("Iniciando bot...")
     disable_webhook()
